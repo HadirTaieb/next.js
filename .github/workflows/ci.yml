@@ -1,17 +1,23 @@
-name: CI (Tests + SonarQube)
+name: CI (Next.js) + SonarQube
 
 on:
   push:
-    branches: [ "main" ]
-  pull_request:
+    branches: [ "canary" ]
+
+concurrency:
+  group: ci-sonar-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test-and-sonar:
+  build-test-sonar:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # utile pour que SonarQube ait un historique git complet
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -22,23 +28,42 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Exemple de tests (à adapter selon ton projet)
-      - name: Run tests
+      # Très utile pour Next.js (même si pas de tests)
+      - name: Lint
+        run: npm run lint --if-present
+
+      - name: Test
         run: npm test --if-present
 
-      # Exemple coverage (si tu l’as configuré)
-      # - name: Run tests with coverage
-      #   run: npm test -- --coverage
+      - name: Build
+        run: npm run build --if-present
+        env:
+          CI: "true"
+
+      # Cache SonarScanner (accélère)
+      - name: Cache SonarQube packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: |
+            ${{ runner.os }}-sonar
 
       - name: SonarQube Scan
         uses: sonarsource/sonarqube-scan-action@v4
         env:
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.projectKey=sonar-nextjs
+            -Dsonar.branch.name=canary
+            -Dsonar.sources=.
 
-      # Optionnel: échouer le pipeline si Quality Gate = ERROR
-      # Note: nécessite que ton instance soit joignable depuis le runner.
-      - name: SonarQube Quality Gate
+      # Optionnel : faire échouer le workflow si Quality Gate échoue
+      # (pratique quand tu veux bloquer)
+      - name: SonarQube Quality Gate (optional)
+        if: always()
         uses: sonarsource/sonarqube-quality-gate-action@v1.1.0
         env:
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
